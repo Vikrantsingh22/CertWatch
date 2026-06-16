@@ -1,0 +1,84 @@
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+.Python
+.venv/
+venv/
+env/
+ENV/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+
+# Packaging / build artifacts
+build/
+dist/
+site/
+*.egg-info/
+*.egg
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and runtime files
+*.log
+logs/
+tmp/
+temp/
+
+# Data and generated artifacts
+data/raw/
+data/interim/
+data/processed/
+data/output/
+artifacts/
+cache/
+exports/
+
+# Frontend / JS tooling if used
+node_modules/
+.pnpm-store/
+yarn-error.log*
+npm-debug.log*
+coverage/
+.turbo/
+.next/
+out/
+vite.svg
+
+# Local database files
+*.sqlite
+*.sqlite3
+*.db
+
+# Misc
+.serverless/
+.aws-sam/
