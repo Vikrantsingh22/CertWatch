@@ -1,0 +1,24 @@
+{
+  "name": "@certwatch/prefilter",
+  "version": "1.0.0",
+  "description": "Brand similarity filtering for certificate domains",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "bullmq": "^4.11.0",
+    "ioredis": "^5.3.2",
+    "fastest-levenshtein": "^1.0.16",
+    "tldts": "^11.1.0",
+    "prom-client": "^15.0.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.2.2",
+    "@types/node": "^20.5.9",
+    "ts-node": "^10.9.1"
+  }
+}
