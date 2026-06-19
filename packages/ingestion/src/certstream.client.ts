@@ -39,6 +39,7 @@ export class CertStreamClient {
   private reconnectAttempts: number = 0;
   private maxReconnectDelay: number = 30000; // 30 seconds max backoff
   private isShuttingDown: boolean = false;
+  private pingInterval: NodeJS.Timeout | null = null;
 
   constructor(url: string, queue: Queue, deduplicator: Deduplicator) {
     this.url = url;
@@ -57,7 +58,14 @@ export class CertStreamClient {
     this.ws.on('open', () => {
       console.log('[CertStream] Connected');
       wsConnectionStatus.set(1);
-      this.reconnectAttempts = 0; // reset backoff on successful connection
+      this.reconnectAttempts = 0;
+
+    // Send ping every 30 seconds to keep connection alive
+    this.pingInterval = setInterval(() => {
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.ping();
+        }
+      }, 30_000);
     });
 
     this.ws.on('message', (data: WebSocket.Data) => {
@@ -65,6 +73,10 @@ export class CertStreamClient {
     });
 
     this.ws.on('close', (code: number, reason: Buffer) => {
+      if (this.pingInterval) {
+        clearInterval(this.pingInterval);
+        this.pingInterval = null;
+      }
       console.warn(`[CertStream] Disconnected: code=${code} reason=${reason.toString()}`);
       wsConnectionStatus.set(0);
       this.scheduleReconnect();
@@ -121,6 +133,7 @@ export class CertStreamClient {
         continue;
       }
 
+      console.log(`[CertStream] New domain: ${domain} (source: ${event.data.source.name})`);
       // Push onto BullMQ raw-domains queue
       try {
         await this.queue.add('domain', {
