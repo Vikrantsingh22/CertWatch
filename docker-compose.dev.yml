@@ -23,10 +23,18 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ../../infra/prometheus/prometheus.dev.yml:/etc/prometheus/prometheus.yml
+      - ./infra/prometheus/prometheus.dev.yml:/etc/prometheus/prometheus.yml
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # extra_hosts lets Prometheus (inside Docker) reach your ts-node service (on host)
+
+  certstream:
+    image: 0rickyy0/certstream-server-go:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./certstream-config:/app/config
 
 volumes:
   redis_dev_data:
