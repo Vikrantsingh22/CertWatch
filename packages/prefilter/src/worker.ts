@@ -65,6 +65,11 @@ export class PreFilterWorker {
       return;
     }
 
+    if (normalized.domainWithoutTld.length < 4) {
+      domainsDropped.inc();
+      return;
+    }
+
     // Step 2: Load watchlist (cached, reloads every 60s)
     const brands = await this.watchlist.getBrands();
     const brandNames = brands.map(b => b.brand);
@@ -74,8 +79,7 @@ export class PreFilterWorker {
     const result = checkSimilarity(
       normalized.normalized,
       normalized.tokens,
-      brandNames,
-      legitMap,
+      brands, // Array<{ brand: string; legitDomains: string[] }>
       normalized.registrable,
     );
 
