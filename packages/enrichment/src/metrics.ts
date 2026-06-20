@@ -1,29 +1,38 @@
-import { Counter, Registry } from 'prom-client';
+import { Counter, Histogram, Registry } from 'prom-client';
 
-const register = new Registry();
+export const register = new Registry();
 
-const whoisEnriched = new Counter({
-  name: 'whois_enriched_total',
-  help: 'Total WHOIS enrichments completed',
+export const rdapDomainsDone = new Counter({
+  name: 'sentinel_enrichment_rdap_total',
+  help: 'RDAP lookups completed',
+  labelNames: ['status'], // 'success' | 'error' | 'timeout'
   registers: [register],
 });
 
-const dnsEnriched = new Counter({
-  name: 'dns_enriched_total',
-  help: 'Total DNS enrichments completed',
+export const dnsDomainsDone = new Counter({
+  name: 'sentinel_enrichment_dns_total',
+  help: 'DNS lookups completed',
+  labelNames: ['status'],
   registers: [register],
 });
 
-const sslEnriched = new Counter({
-  name: 'ssl_enriched_total',
-  help: 'Total SSL/ASN enrichments completed',
+export const asnLookupsDone = new Counter({
+  name: 'sentinel_enrichment_asn_total',
+  help: 'ASN lookups completed',
+  labelNames: ['flagged'], // 'true' | 'false'
   registers: [register],
 });
 
-const contentEnriched = new Counter({
-  name: 'content_enriched_total',
-  help: 'Total content enrichments completed',
+export const enrichmentDuration = new Histogram({
+  name: 'sentinel_enrichment_duration_ms',
+  help: 'Per-worker enrichment duration in ms',
+  labelNames: ['worker'],
+  buckets: [50, 100, 250, 500, 1000, 2000, 5000],
   registers: [register],
 });
 
-export { whoisEnriched, dnsEnriched, sslEnriched, contentEnriched, register };
+export const coordinatorPushed = new Counter({
+  name: 'sentinel_enrichment_coordinator_pushed_total',
+  help: 'Domains pushed to scoring-queue by coordinator',
+  registers: [register],
+});
