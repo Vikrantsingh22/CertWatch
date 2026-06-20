@@ -17,8 +17,9 @@
     "tldts": "^7.4.3"
   },
   "devDependencies": {
-    "@types/node": "^20.5.9",
-    "ts-node": "^10.9.1",
-    "typescript": "^5.2.2"
+    "@types/node": "^20.19.43",
+    "nodemon": "^3.1.14",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
   }
 }
