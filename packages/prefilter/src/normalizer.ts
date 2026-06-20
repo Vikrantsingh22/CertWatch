@@ -30,29 +30,35 @@ export interface NormalizedDomain {
 export function normalizeDomain(domain: string): NormalizedDomain | null {
   try {
     const parsed = parse(domain);
-
-    // tldts couldn't parse it or no valid domain
     if (!parsed.domain || !parsed.publicSuffix) return null;
 
-    const registrable = parsed.domain; // e.g. "paytm-secure-login.com"
-    const tld = parsed.publicSuffix;   // e.g. "com"
-    const domainWithoutTld = registrable
+    const registrable = parsed.domain;  // "paytm-secure-login.com"
+    const tld = parsed.publicSuffix;    // "com"
+
+    // domainBody = registrable without TLD = "paytm-secure-login"
+    const domainBody = registrable
       .slice(0, registrable.length - tld.length - 1)
       .toLowerCase();
 
-    // Apply homoglyph substitutions
-    let normalized = domainWithoutTld;
+    // Apply homoglyphs
+    let normalized = domainBody;
     for (const [glyph, replacement] of Object.entries(HOMOGLYPH_MAP)) {
       normalized = normalized.split(glyph).join(replacement);
     }
 
-    // Tokenize on hyphens and dots
-    // "paytm-secure-login" → ["paytm", "secure", "login"]
+    // Tokenize the domain BODY only (not subdomains)
     const tokens = normalized
       .split(/[-.]/)
-      .filter(t => t.length > 1); // skip single chars
+      .filter(t => t.length >= 3); // minimum 3 chars to avoid noise from "www", "en", "my"
 
-    return { original: domain, registrable, domainWithoutTld, normalized, tokens, tld };
+    return {
+      original: domain,
+      registrable,         // full registrable: "paytm-secure-login.com"
+      domainWithoutTld: domainBody,
+      normalized,
+      tokens,
+      tld,
+    };
   } catch {
     return null;
   }
