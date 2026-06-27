@@ -7,7 +7,6 @@ import {
   domainsReceived, domainsDropped, domainsPassed, processingDuration
 } from './metrics';
 
-// Job payload from ingestion
 interface RawDomainJob {
   domain: string;
   source: string;
@@ -20,13 +19,16 @@ export class PreFilterWorker {
   private worker: Worker;
   private enrichmentQueue: Queue;
   private watchlist: WatchlistService;
+  private dedupRedis: Redis; // dedicated instance for dedup SET NX calls
 
   constructor(
     workerRedis: Redis,
     producerRedis: Redis,
     watchlist: WatchlistService,
+    dedupRedis: Redis,       // ← add this param
   ) {
     this.watchlist = watchlist;
+    this.dedupRedis = dedupRedis;
 
     this.enrichmentQueue = new Queue('enrichment-queue', {
       connection: producerRedis,
@@ -45,7 +47,7 @@ export class PreFilterWorker {
       },
       {
         connection: workerRedis,
-        concurrency: 50, // process 50 domains simultaneously — they're CPU-bound not IO-bound
+        concurrency: 50,
       }
     );
 
@@ -70,16 +72,15 @@ export class PreFilterWorker {
       return;
     }
 
-    // Step 2: Load watchlist (cached, reloads every 60s)
+    // Step 2: Load watchlist
     const brands = await this.watchlist.getBrands();
-    const brandNames = brands.map(b => b.brand);
     const legitMap = this.watchlist.getLegitDomainMap();
 
     // Step 3: Check similarity
     const result = checkSimilarity(
       normalized.normalized,
       normalized.tokens,
-      brands, // Array<{ brand: string; legitDomains: string[] }>
+      brands,
       normalized.registrable,
     );
 
@@ -90,18 +91,35 @@ export class PreFilterWorker {
       return;
     }
 
-    // Step 4: Push to enrichment queue
-    domainsPassed.inc({ match_reason: result.matchReason! });
+    // Step 4: Strip www. to get canonical FQDN
+    // www.apple-pharmacy.jp and apple-pharmacy.jp are the same domain
+    // Always enqueue under the apex — enrichment workers don't need the www. variant
+    const fqdn = data.domain.replace(/^www\./, '');
+    const registrable = normalized.registrable;
 
+    // Step 5: Dedup gate — 5 min window prevents duplicate enrichment jobs
+    // Certstream emits the same cert multiple times (different CT logs log the same cert)
+    // Without this gate, each emission creates a separate enrichment job
+    const dedupKey = `prefilter:enqueued:${registrable}`;
+    const isNew = await this.dedupRedis.set(dedupKey, '1', 'EX', 300, 'NX');
+    if (!isNew) {
+      console.log(`[PreFilter] SKIP duplicate ${data.domain} → ${registrable} (seen in last 5min)`);
+      domainsDropped.inc();
+      return;
+    }
+
+    // Step 6: Push to enrichment queue using canonical fqdn (no www.)
+    domainsPassed.inc({ match_reason: result.matchReason! });
     console.log(
-      `[PreFilter] PASS ${data.domain} → score: ${result.score.toFixed(2)} ` +
+      `[PreFilter] PASS ${fqdn} → score: ${result.score.toFixed(2)} ` +
       `brand: ${result.brand} reason: ${result.matchReason}` +
       (result.keyword ? ` keyword: ${result.keyword}` : '')
     );
 
     await this.enrichmentQueue.add('enrich', {
-      ...data,                        // carry forward all ingestion data
-      targetBrand: result.brand,      // which brand is being impersonated
+      ...data,
+      fqdn:registrable,                           // canonical domain, no www. — workers use this
+      targetBrand: result.brand,
       similarityScore: result.score,
       matchReason: result.matchReason,
       suspiciousKeyword: result.keyword,
