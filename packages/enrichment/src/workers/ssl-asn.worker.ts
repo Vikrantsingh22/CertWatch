@@ -3,6 +3,7 @@ import { Redis } from 'ioredis';
 import dns from 'dns/promises';
 import { EnrichmentCoordinator } from '../coordinator';
 import { lookupAsn, FLAGGED_ASNS, PARTIAL_FLAGGED_ASNS } from '../lib/asn-lookup';
+import { setTimeout as sleep } from 'timers/promises';
 
 export interface SslAsnResult {
   certIssuedAt: string;       // ISO string — from job.data.certIssuedAt
@@ -19,9 +20,9 @@ export function startSslAsnWorker(
   coordinator: EnrichmentCoordinator,
 ): Worker {
   const worker = new Worker(
-    'enrichment-queue',
+    'ssl-asn-queue',
     async (job: Job) => {
-      const fqdn: string = job.data.domain;
+      const fqdn: string = job.data.fqdn ?? job.data.domain;
 
       try {
         // Cert data already in the job payload — no HTTP call needed
@@ -37,9 +38,12 @@ export function startSslAsnWorker(
         } else {
           // DNS worker hasn't finished yet — do our own quick A record lookup
           try {
-            const addresses = await dns.resolve4(fqdn);
-            ip = addresses[0] ?? null;
-          } catch { /* domain doesn't resolve */ }
+            const result = await Promise.race([
+              dns.resolve4(fqdn),
+              sleep(2000).then(() => { throw new Error('DNS timeout'); }),
+            ]);
+            ip = (result as string[])[0] ?? null;
+          } catch {  ip = null; }
         }
 
         let asn: string | null = null;
@@ -64,6 +68,7 @@ export function startSslAsnWorker(
           asn, asnOrg, asnCountry,
           asnFlagged, asnPartialFlag,
         };
+        console.log(`[SSL/ASN] submitted for ${fqdn}:`);
 
         await coordinator.submit(fqdn, 'ssl_asn', result, job.data);
       } catch (err: any) {
