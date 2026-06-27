@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'timers/promises';
 // Parking providers route their domains to these IPs
 // A domain pointing here = registered but not yet active = staged attack
 const PARKING_IPS = new Set([
@@ -50,12 +51,13 @@ async function resolveDomain(fqdn: string): Promise<DnsResult> {
   let nameservers: string[] = [];
   let mxPresent = false;
   let isNxDomain = false;
-
+  const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
+    Promise.race([p, sleep(ms).then(() => { throw new Error('timeout'); })]);
   // Run A, NS, MX lookups in parallel — don't let one block others
   const [aResult, nsResult, mxResult] = await Promise.allSettled([
-    dns.resolve4(fqdn),
-    dns.resolveNs(fqdn),
-    dns.resolveMx(fqdn),
+    withTimeout(dns.resolve4(fqdn),   3000),
+    withTimeout(dns.resolveNs(fqdn),  3000),
+    withTimeout(dns.resolveMx(fqdn),  3000),
   ]);
 
   if (aResult.status === 'fulfilled' && aResult.value.length > 0) {
@@ -84,11 +86,12 @@ export function startDnsWorker(
   coordinator: EnrichmentCoordinator,
 ): Worker {
   const worker = new Worker(
-    'enrichment-queue',
+    'dns-queue',
     async (job: Job) => {
-      const fqdn: string = job.data.domain;
+      const fqdn: string = job.data.fqdn ?? job.data.domain;
       try {
         const result = await resolveDomain(fqdn);
+        console.log(`[DNS] resolved ${fqdn}:`);
         await coordinator.submit(fqdn, 'dns', result, job.data);
       } catch (err: any) {
         console.error(`[DNS] Failed for ${fqdn}: ${err.message}`);
@@ -99,7 +102,13 @@ export function startDnsWorker(
       connection: workerRedis,
       concurrency: 50, // DNS is fast IO — high concurrency fine
     }
+
   );
+
+  
+  worker.on('error',   (err)   => console.error('[DNS] Worker error:', err));
+  worker.on('stalled', (jobId) => console.warn('[DNS] Job stalled:', jobId));
+  worker.on('failed',  (job, err) => console.error(`[DNS] Job failed: ${job?.data?.fqdn ?? job?.data?.domain}`, err.message));
 
   console.log('[DNS Worker] Started');
   return worker;
