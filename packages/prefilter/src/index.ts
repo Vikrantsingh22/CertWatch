@@ -28,12 +28,14 @@ async function main() {
     enableReadyCheck: false,
   });
 
+  const dedupRedis = new Redis(REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: false });
+
   // Init watchlist (seeds Redis if empty)
   const watchlist = new WatchlistService(watchlistRedis);
   await watchlist.init();
 
   // Start worker
-  const worker = new PreFilterWorker(workerRedis, producerRedis, watchlist);
+  const worker = new PreFilterWorker(workerRedis, producerRedis, watchlist, dedupRedis);
   await worker.start();
 
   // Queue depth gauge (monitor enrichment queue)
