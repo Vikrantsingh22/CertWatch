@@ -1,25 +1,9 @@
-const RDAP_ENDPOINTS: Record<string, string> = {
-  'com':  'https://rdap.verisign.com/com/v1/domain',
-  'net':  'https://rdap.verisign.com/net/v1/domain',
-  'org':  'https://rdap.publicinterest.registry/rdap/domain',
-  'in':   'https://www.registry.in/rdap/domain',
-  'io':   'https://rdap.iana.org/domain',
-  'co':   'https://rdap.iana.org/domain',
-  'info': 'https://rdap.afilias.info/rdap/domain',
-  'biz':  'https://rdap.nic.biz/domain',
-};
-const RDAP_FALLBACK = 'https://rdap.org/domain';
-
-function getRdapUrl(domain: string, tld: string): string {
-  const base = RDAP_ENDPOINTS[tld] ?? RDAP_FALLBACK;
-  return `${base}/${domain}`;
-}
-
-
 import { Worker, Job } from 'bullmq';
 import { Redis } from 'ioredis';
 import { EnrichmentCoordinator } from '../coordinator';
 import { rdapDomainsDone } from '../metrics';
+import { getRdapUrl } from '../lib/rdap-router';
+import { parse } from 'tldts';
 
 export interface WhoisResult {
   domainAgeHours: number | null;  // null if RDAP lookup failed
@@ -29,11 +13,20 @@ export interface WhoisResult {
   registrationDate: string | null; // ISO string, for scoring engine
 }
 
-export async function lookupRdap(domain: string, tld: string): Promise<WhoisResult> {
-  const url = getRdapUrl(domain, tld);
+export async function lookupRdap(fqdn: string): Promise<WhoisResult> {
+  const parsed = parse(fqdn);
+  const registrable = parsed.domain ?? fqdn;
+  const tld = registrable.split('.').pop()?.toLowerCase() ?? '';
+  const SKIP_RDAP_TLDS = new Set(['ph', 'su', 'cn', 'ru', 'tk', 'ml', 'ga', 'cf', 'gq']);
+  if (SKIP_RDAP_TLDS.has(tld)) {
+    console.log(`[WHOIS] Skipping RDAP for .${tld} (known slow/blocking) — ${registrable}`);
+    return { domainAgeHours: null, registrar: null, privacyProtected: false, registrantCountry: null, registrationDate: null };
+  }
+  const url = getRdapUrl(registrable);
+  console.log(`[WHOIS] RDAP lookup for ${registrable} at ${url}`);
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000); // 8s timeout
+  const timeout = setTimeout(() => controller.abort(), 4000); // 4s timeout
 
   try {
     const res = await fetch(url, {
@@ -53,6 +46,12 @@ export async function lookupRdap(domain: string, tld: string): Promise<WhoisResu
           registrantCountry: null,
           registrationDate: null,
         };
+      }
+      if (res.status === 400) {
+        // Queried a subdomain or malformed domain — shouldn't happen after fix 2
+        // but handle gracefully as a safety net
+        console.warn(`[WHOIS] RDAP 400 for ${registrable} — subdomain query rejected`);
+        return { domainAgeHours: null, registrar: null, privacyProtected: false, registrantCountry: null, registrationDate: null };
       }
       throw new Error(`RDAP HTTP ${res.status}`);
     }
@@ -117,42 +116,29 @@ function parseRdapResponse(data: any): WhoisResult {
   };
 }
 
-export function startWhoisWorker(
-  workerRedis: Redis,
-  coordinator: EnrichmentCoordinator,
-): Worker {
+export function startWhoisWorker(workerRedis: Redis, coordinator: EnrichmentCoordinator): Worker {
   const worker = new Worker(
-    'enrichment-queue',
+    'whois-queue',
     async (job: Job) => {
-      const { domain, tld, ...rest } = job.data;
-
-      // Use tld from normalizer output (passed in prefilter job payload)
-      const fqdn: string = job.data.domain;
-      const domainTld: string = job.data.tld ?? fqdn.split('.').pop() ?? 'com';
+      const fqdn: string = job.data.fqdn ?? job.data.domain;
 
       try {
-        const result = await lookupRdap(fqdn, domainTld);
+        const result = await lookupRdap(fqdn);
         rdapDomainsDone.inc({ status: 'success' });
+        console.log(`[WHOIS] submitted for ${fqdn}`);
         await coordinator.submit(fqdn, 'whois', result, job.data);
       } catch (err: any) {
         console.error(`[WHOIS] Failed for ${fqdn}: ${err.message}`);
         rdapDomainsDone.inc({ status: 'error' });
-        // Don't let one worker failure stall the whole pipeline
         await coordinator.submitFailure(fqdn, 'whois', job.data);
       }
     },
-    {
-      connection: workerRedis,
-      concurrency: 15, // RDAP is IO-bound — high concurrency is fine
-      // IMPORTANT: use a unique name so it only processes its own jobs
-      // All 4 workers share the same queue — they each pick up ALL jobs
-      // This is correct — each worker independently enriches the same domain
-    },
+    { connection: workerRedis, concurrency: 40 },
   );
 
-  worker.on('failed', (job, err) =>
-    console.error(`[WHOIS] Job error: ${job?.data?.domain}`, err.message)
-  );
+  worker.on('error',   (err)        => console.error('[WHOIS] Worker error:', err));
+  worker.on('stalled', (jobId)      => console.warn('[WHOIS] Job stalled:', jobId));
+  worker.on('failed',  (job, err)   => console.error(`[WHOIS] Job failed: ${job?.data?.fqdn ?? job?.data?.domain}`, err.message));
 
   console.log('[WHOIS Worker] Started');
   return worker;
